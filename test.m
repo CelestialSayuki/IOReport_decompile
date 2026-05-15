@@ -1,62 +1,61 @@
-/* Testing out IOReport
- *
- * code by dehydratedpotato, 2023
+/* Testing out IOReport - fixed version
+ * code by dehydratedpotato, 2023 / fixes 2025
  */
 
 #import <Foundation/Foundation.h>
+#include <unistd.h>
 #import "IOReport_decompile.h"
-
-typedef uint8_t IOReportFormat;
-enum {
-    kIOReportInvalidFormat = 0,
-    kIOReportFormatSimple = 1,
-    kIOReportFormatState = 2,
-    kIOReportFormatHistogram = 3,
-    kIOReportFormatSimpleArray = 4
-};
+#include "IOReportTypes.h"
 
 int main(int argc, const char * argv[]) {
     @autoreleasepool {
-        NSString * group = @"CPU Stats";
-        
-        CFMutableDictionaryRef chn = IOReportCopyChannelsInGroup(group, 0, 0, 0, 0); // or IOReportCopyAllChannels(0, 0);
-        
-        CFMutableDictionaryRef subchn = NULL; // can be omitted, as there seemed to be no use for this param, so I added no logic for it ;)
+        /* Merge CPU + Energy + PMP like PowerMonitor does */
+        CFMutableDictionaryRef chn = IOReportCopyChannelsInGroup(@"CPU Stats",    nil, 0, 0, 0);
+        CFMutableDictionaryRef nrg = IOReportCopyChannelsInGroup(@"Energy Model", nil, 0, 0, 0);
+        CFMutableDictionaryRef pmp = IOReportCopyChannelsInGroup(@"PMP",          nil, 0, 0, 0);
+        if (nrg) { IOReportMergeChannels(chn, nrg, nil); CFRelease(nrg); }
+        if (pmp) { IOReportMergeChannels(chn, pmp, nil); CFRelease(pmp); }
 
+        CFMutableDictionaryRef subchn = NULL;
         IOReportSubscriptionRef sub = IOReportCreateSubscription(NULL, chn, &subchn, 0, 0);
-        
-        CFDictionaryRef samples = IOReportCreateSamples(sub, chn, NULL);
+        if (!sub) { NSLog(@"IOReportCreateSubscription failed — need root?"); return 1; }
 
-        IOReportIterate(samples, ^(IOReportSampleRef sample) {
-            NSString* subgroup = IOReportChannelGetSubGroup(sample);
-            NSString* group = IOReportChannelGetGroup(sample);
-            NSString* driver = IOReportChannelGetDriverName(sample);
-            NSString* chann_name = IOReportChannelGetChannelName(sample);
-            NSString* unit_label = IOReportChannelGetUnitLabel(sample);
-            
+        /* Two samples 500 ms apart so delta is non-zero */
+        CFDictionaryRef s1 = IOReportCreateSamples(sub, subchn, NULL);
+        usleep(500000);
+        CFDictionaryRef s2 = IOReportCreateSamples(sub, subchn, NULL);
+        CFDictionaryRef delta = IOReportCreateSamplesDelta(s1, s2, NULL);
+
+        NSLog(@"=== our IOReport delta (0.5s) ===");
+
+        IOReportIterate(delta, ^(IOReportSampleRef sample) {
+            NSString *subgroup  = IOReportChannelGetSubGroup(sample);
+            NSString *group     = IOReportChannelGetGroup(sample);
+            NSString *chann_name = IOReportChannelGetChannelName(sample);
+            NSString *unit_label = IOReportChannelGetUnitLabel(sample);
             int chann_format = IOReportChannelGetFormat(sample);
+
             if (chann_format == kIOReportFormatState) {
                 long state_count = IOReportStateGetCount(sample);
-                NSString* idx_name = IOReportStateGetNameForIndex(sample, 0);
-                uint64_t  residency = IOReportStateGetResidency(sample, 0);
-
-                NSLog(@"driver: %@ group: %@ subgroup: %@ unit_label: %@, state_name: %@ chann_name: %@ chann_format: %u state_cnt: %ld res: %llu", driver, group, subgroup, unit_label, idx_name, chann_name, chann_format, state_count, residency);
+                for (int i = 0; i < state_count; i++) {
+                    NSString *idx_name = IOReportStateGetNameForIndex(sample, i);
+                    uint64_t  residency = IOReportStateGetResidency(sample, i);
+                    printf("[STATE] grp=%-13s sub=%-34s ch=%-10s state[%d]=%-8s res=%llu\n",
+                           group.UTF8String, subgroup.UTF8String,
+                           chann_name ? chann_name.UTF8String : "nil",
+                           i, idx_name ? idx_name.UTF8String : "NIL", residency);
+                }
             } else if (chann_format == kIOReportFormatSimple) {
-                long state_count = IOReportStateGetCount(sample);
-                NSString* idx_name = IOReportStateGetNameForIndex(sample, 0);
-                long  residency = IOReportSimpleGetIntegerValue(sample, 0);
-
-                NSLog(@"driver: %@ group: %@ subgroup: %@ unit_label: %@, state_name: %@ chann_name: %@ chann_format: %u state_cnt: %ld integer: %ld", driver, group, subgroup, unit_label, idx_name, chann_name, chann_format, state_count, residency);
+                long val = IOReportSimpleGetIntegerValue(sample, 0);
+                printf("[SIMPLE] grp=%-12s sub=%-34s ch=%-20s val=%ld\n",
+                       group.UTF8String, subgroup.UTF8String,
+                       chann_name ? chann_name.UTF8String : "nil", val);
             }
-            else {
-                NSLog(@"driver: %@ group: %@ subgroup: %@ unit_label: %@ chann_name: %@ chann_format: %u value: %llu", driver, group, subgroup, unit_label, chann_name, chann_format, 0llu);
-            }
-
             return re_kIOReportIterOk;
         });
 
-        CFRelease(chn);
-        CFRelease(samples);
+        CFRelease(delta); CFRelease(s1); CFRelease(s2);
+        CFRelease(subchn); CFRelease(chn);
     }
     return 0;
 }

@@ -11,6 +11,7 @@ enum {
 typedef struct IOReportSubscription* IOReportSubscriptionRef;
 typedef CFDictionaryRef IOReportSampleRef;
 
+
 IOReportSubscriptionRef IOReportCreateSubscription(void* a,
                                                    CFMutableDictionaryRef desiredChannels,
                                                    CFMutableDictionaryRef* subbedChannels,
@@ -25,6 +26,14 @@ CFMutableDictionaryRef IOReportCopyChannelsInGroup(NSString* group,
 
 CFMutableDictionaryRef IOReportCopyAllChannels(uint64_t a,
                                                uint64_t b);
+
+void IOReportMergeChannels(CFMutableDictionaryRef dest,
+                           CFMutableDictionaryRef src,
+                           CFTypeRef nil_unused);
+
+CFDictionaryRef IOReportCreateSamplesDelta(CFDictionaryRef prev,
+                                           CFDictionaryRef curr,
+                                           CFTypeRef nil_unused);
 int IOReportGetChannelCount(CFDictionaryRef a);
 CFDictionaryRef IOReportCreateSamples(IOReportSubscriptionRef iorsub,
                                       CFMutableDictionaryRef subbedChannels,
